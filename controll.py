@@ -13,6 +13,26 @@ from mediapipe.tasks.python import vision
 MODEL_PATH = "models/gesture_recognizer.task"
 
 # -------------------------------
+# APP MODE
+# -------------------------------
+current_app = "youtube"
+last_switch_time = 0
+switch_cooldown = 2
+
+# -------------------------------
+# CUSTOM GESTURE LABELS
+# -------------------------------
+GESTURE_LABELS = {
+    "Open_Palm": "Full Screen",
+    "Thumb_Up": "Volume Up",
+    "Thumb_Down": "Volume Down",
+    "Victory": "Mute",
+    "Closed_Fist": "Play / Pause",
+    "Pointing_Up": "+10 Forward",
+    "ILoveYou": "-10 Backward"
+}
+
+# -------------------------------
 # HAND CONNECTIONS
 # -------------------------------
 HAND_CONNECTIONS = [
@@ -25,7 +45,7 @@ HAND_CONNECTIONS = [
 ]
 
 # -------------------------------
-# Create Gesture Recognizer
+# CREATE GESTURE RECOGNIZER
 # -------------------------------
 BaseOptions = python.BaseOptions
 GestureRecognizer = vision.GestureRecognizer
@@ -41,69 +61,131 @@ options = GestureRecognizerOptions(
 gesture_recognizer = GestureRecognizer.create_from_options(options)
 
 # -------------------------------
-# Webcam
+# WEBCAM
 # -------------------------------
 cap = cv2.VideoCapture(0)
 timestamp = 0
 
 last_gesture_time = 0
-cooldown = 1.0  # seconds
+cooldown = 1.0
 
-def perform_action(gesture_name):
-    global last_gesture_time
-    current_time = time.time()
+# -------------------------------
+# WINDOW ACTIVATION
+# -------------------------------
+def activate_window(title):
+    hwnd = win32gui.FindWindow(None, title)
 
-    if current_time - last_gesture_time < cooldown:
+    if hwnd:
+        win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+        win32gui.SetForegroundWindow(hwnd)
+
+# -------------------------------
+# SWITCH APPLICATION
+# -------------------------------
+def switch_app():
+    global current_app, last_switch_time
+
+    now = time.time()
+
+    if now - last_switch_time < switch_cooldown:
         return
 
-    if gesture_name == "Open_Palm":
-        pyautogui.press("f")
-        print("f")
+    if current_app == "youtube":
+        current_app = "vlc"
+        activate_window("VLC media player")
+        print("Switched to VLC")
 
-    elif gesture_name == "Thumb_Up":
-        pyautogui.press("up")
-        print("up")
+    else:
+        current_app = "youtube"
+        activate_window("YouTube")
+        print("Switched to YouTube")
 
-    elif gesture_name == "Thumb_Down":
-        pyautogui.press("down")
-        print("down")
+    last_switch_time = now
 
-    elif gesture_name == "Victory":
-        pyautogui.press("m")
-        print("m")
 
-    elif gesture_name == "Closed_Fist":
-        pyautogui.press("k")
-        print("k")
+# -------------------------------
+# PERFORM ACTION
+# -------------------------------
+def perform_action(gesture_name):
 
-    elif gesture_name == "Pointing_Up":
-        pyautogui.press("l")
-        print("l")
+    global last_gesture_time
 
-    elif gesture_name == "ILoveYou":
-        pyautogui.press("j")
-        print("j")
+    now = time.time()
 
-    last_gesture_time = current_time
+    if now - last_gesture_time < cooldown:
+        return
+
+    # -----------------------
+    # YOUTUBE MODE
+    # -----------------------
+    if current_app == "youtube":
+
+        if gesture_name == "Open_Palm":
+            pyautogui.press("f")
+
+        elif gesture_name == "Thumb_Up":
+            pyautogui.press("up")
+
+        elif gesture_name == "Thumb_Down":
+            pyautogui.press("down")
+
+        elif gesture_name == "Victory":
+            pyautogui.press("m")
+
+        elif gesture_name == "Closed_Fist":
+            pyautogui.press("k")
+
+        elif gesture_name == "Pointing_Up":
+            pyautogui.press("l")
+
+        elif gesture_name == "ILoveYou":
+            pyautogui.press("j")
+
+    # -----------------------
+    # VLC MODE
+    # -----------------------
+    elif current_app == "vlc":
+
+        if gesture_name == "Open_Palm":
+            pyautogui.press("f")
+
+        elif gesture_name == "Thumb_Up":
+            pyautogui.press("up")
+
+        elif gesture_name == "Thumb_Down":
+            pyautogui.press("down")
+
+        elif gesture_name == "Closed_Fist":
+            pyautogui.press("space")
+
+        elif gesture_name == "Pointing_Up":
+            pyautogui.press("right")
+
+        elif gesture_name == "ILoveYou":
+            pyautogui.press("left")
+
+        elif gesture_name == "Victory":
+            pyautogui.press("m")
+
+    last_gesture_time = now
 
 
 # -------------------------------
 # CREATE FLOATING WINDOW
 # -------------------------------
-window_name = "YouTube Gesture Controller"
-cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-cv2.resizeWindow(window_name, 400, 300)
+window_name = "Gesture Controller"
 
-# Get screen size
+cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+
 screen_width, screen_height = pyautogui.size()
 
-# Position at top-right
 x_position = screen_width - 410
 y_position = 10
+
 cv2.moveWindow(window_name, x_position, y_position)
 
-# Make always on top
 hwnd = win32gui.FindWindow(None, window_name)
+
 win32gui.SetWindowPos(
     hwnd,
     win32con.HWND_TOPMOST,
@@ -118,11 +200,14 @@ win32gui.SetWindowPos(
 # MAIN LOOP
 # -------------------------------
 while cap.isOpened():
+
     success, frame = cap.read()
+
     if not success:
         break
 
     frame = cv2.flip(frame, 1)
+
     h, w, _ = frame.shape
 
     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -133,49 +218,96 @@ while cap.isOpened():
     )
 
     timestamp += 1
-    result = gesture_recognizer.recognize_for_video(mp_image, timestamp)
 
+    result = gesture_recognizer.recognize_for_video(
+        mp_image,
+        timestamp
+    )
+
+    # -------------------------------
+    # APP SWITCH GESTURE
+    # -------------------------------
+    if result.gestures and len(result.gestures) == 2:
+
+        g1 = result.gestures[0][0].category_name
+        g2 = result.gestures[1][0].category_name
+
+        if g1 == "Pointing_Up" and g2 == "Pointing_Up":
+            switch_app()
+
+    # -------------------------------
+    # DRAW HANDS
+    # -------------------------------
     if result.hand_landmarks:
+
         for idx, hand_landmarks in enumerate(result.hand_landmarks):
 
             for lm in hand_landmarks:
-                cx, cy = int(lm.x * w), int(lm.y * h)
-                cv2.circle(frame, (cx, cy), 5, (0, 255, 0), -1)
 
-            for start_idx, end_idx in HAND_CONNECTIONS:
-                x1 = int(hand_landmarks[start_idx].x * w)
-                y1 = int(hand_landmarks[start_idx].y * h)
-                x2 = int(hand_landmarks[end_idx].x * w)
-                y2 = int(hand_landmarks[end_idx].y * h)
-                cv2.line(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
+                cx = int(lm.x * w)
+                cy = int(lm.y * h)
+
+                cv2.circle(frame, (cx, cy), 5, (0,255,0), -1)
+
+            for start, end in HAND_CONNECTIONS:
+
+                x1 = int(hand_landmarks[start].x * w)
+                y1 = int(hand_landmarks[start].y * h)
+
+                x2 = int(hand_landmarks[end].x * w)
+                y2 = int(hand_landmarks[end].y * h)
+
+                cv2.line(frame,(x1,y1),(x2,y2),(255,0,0),2)
 
             if result.gestures and len(result.gestures[idx]) > 0:
+
                 gesture = result.gestures[idx][0]
+
                 gesture_name = gesture.category_name
                 confidence = gesture.score
 
                 perform_action(gesture_name)
 
+                display_name = GESTURE_LABELS.get(
+                    gesture_name,
+                    gesture_name
+                )
+
                 wrist = hand_landmarks[0]
+
                 x = int(wrist.x * w)
                 y = int(wrist.y * h)
 
                 cv2.putText(
                     frame,
-                    f"{gesture_name} ({confidence:.2f})",
-                    (x - 20, y - 20),
+                    f"{display_name} ({confidence:.2f})",
+                    (x-20,y-20),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.7,
-                    (0, 0, 255),
+                    (0,0,255),
                     2
                 )
 
-    # Resize frame to 400x300 for floating window
-    small_frame = cv2.resize(frame, (400, 300))
+    # -------------------------------
+    # SHOW CURRENT MODE
+    # -------------------------------
+    cv2.putText(
+        frame,
+        f"MODE: {current_app.upper()}",
+        (10,30),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.8,
+        (0,255,255),
+        2
+    )
+
+    small_frame = cv2.resize(frame,(400,300))
+
     cv2.imshow(window_name, small_frame)
 
-    if cv2.waitKey(1) & 0xFF == ord('q'):
+    if cv2.waitKey(1) & 0xFF == ord("q"):
         break
+
 
 cap.release()
 cv2.destroyAllWindows()
