@@ -1,3 +1,4 @@
+import math
 import cv2
 import mediapipe as mp
 import pyautogui
@@ -29,7 +30,10 @@ GESTURE_LABELS = {
     "Victory": "Mute",
     "Closed_Fist": "Play / Pause",
     "Pointing_Up": "+10 Forward",
-    "ILoveYou": "-10 Backward"
+    "ILoveYou": "-10 Backward",
+    "Point_Left": "Previous_Video",
+    "Point_Right": "Next_Video",
+    "None": "None"
 }
 
 # -------------------------------
@@ -70,9 +74,53 @@ last_gesture_time = 0
 cooldown = 1.0
 
 # -------------------------------
+# CUSTOM LANDMARK GESTURE
+# -------------------------------
+def dist(a, b):
+    return math.hypot(a.x - b.x, a.y - b.y)
+
+
+def detect_point_direction(hand_landmarks):
+
+    base = hand_landmarks[5]
+    tip = hand_landmarks[8]
+
+    dx = tip.x - base.x
+    dy = tip.y - base.y
+
+    palm = hand_landmarks[9]
+
+    # distances of other fingers from palm
+    middle_dist = dist(hand_landmarks[12], palm)
+    ring_dist   = dist(hand_landmarks[16], palm)
+    pinky_dist  = dist(hand_landmarks[20], palm)
+
+    # relaxed thresholds so thumb gestures don't interfere
+    middle_folded = middle_dist < 0.20
+    ring_folded   = ring_dist < 0.20
+    pinky_folded  = pinky_dist < 0.20
+
+    # thumb is intentionally ignored (floating)
+
+    if not (middle_folded and ring_folded and pinky_folded):
+        return None
+
+    # detect horizontal pointing
+    if abs(dx) > abs(dy):
+
+        if dx > 0.08:   # slightly stronger threshold
+            return "Point_Right"
+
+        elif dx < -0.08:
+            return "Point_Left"
+
+    return None
+
+# -------------------------------
 # WINDOW ACTIVATION
 # -------------------------------
 def activate_window(title):
+
     hwnd = win32gui.FindWindow(None, title)
 
     if hwnd:
@@ -83,6 +131,7 @@ def activate_window(title):
 # SWITCH APPLICATION
 # -------------------------------
 def switch_app():
+
     global current_app, last_switch_time
 
     now = time.time()
@@ -115,9 +164,7 @@ def perform_action(gesture_name):
     if now - last_gesture_time < cooldown:
         return
 
-    # -----------------------
     # YOUTUBE MODE
-    # -----------------------
     if current_app == "youtube":
 
         if gesture_name == "Open_Palm":
@@ -141,9 +188,13 @@ def perform_action(gesture_name):
         elif gesture_name == "ILoveYou":
             pyautogui.press("j")
 
-    # -----------------------
+        elif gesture_name == "Point_Left":
+            pyautogui.hotkey("shift","p")
+
+        elif gesture_name == "Point_Right":
+            pyautogui.hotkey("shift","n")
+
     # VLC MODE
-    # -----------------------
     elif current_app == "vlc":
 
         if gesture_name == "Open_Palm":
@@ -166,6 +217,12 @@ def perform_action(gesture_name):
 
         elif gesture_name == "Victory":
             pyautogui.press("m")
+
+        elif gesture_name == "Point_Left":
+            pyautogui.press("p")
+
+        elif gesture_name == "Point_Right":
+            pyautogui.press("n")
 
     last_gesture_time = now
 
@@ -242,6 +299,7 @@ while cap.isOpened():
 
         for idx, hand_landmarks in enumerate(result.hand_landmarks):
 
+            # Draw points
             for lm in hand_landmarks:
 
                 cx = int(lm.x * w)
@@ -249,6 +307,7 @@ while cap.isOpened():
 
                 cv2.circle(frame, (cx, cy), 5, (0,255,0), -1)
 
+            # Draw connections
             for start, end in HAND_CONNECTIONS:
 
                 x1 = int(hand_landmarks[start].x * w)
@@ -259,34 +318,59 @@ while cap.isOpened():
 
                 cv2.line(frame,(x1,y1),(x2,y2),(255,0,0),2)
 
+            # -------------------------------
+            # GESTURE DETECTION
+            # -------------------------------
+
+            gesture_name = None
+            confidence = 0
+
+            # MODEL GESTURE FIRST
             if result.gestures and len(result.gestures[idx]) > 0:
 
                 gesture = result.gestures[idx][0]
 
-                gesture_name = gesture.category_name
-                confidence = gesture.score
+                if gesture.score > 0.6:
+                    gesture_name = gesture.category_name
+                    confidence = gesture.score
 
+            # IF MODEL FAILS → CUSTOM
+            if gesture_name is None:
+
+                custom_gesture = detect_point_direction(hand_landmarks)
+
+                if custom_gesture:
+                    gesture_name = custom_gesture
+                    confidence = 1.0
+
+            # IF STILL NONE
+            if gesture_name is None:
+                gesture_name = "None"
+
+            # PERFORM ACTION
+            if gesture_name != "None":
                 perform_action(gesture_name)
 
-                display_name = GESTURE_LABELS.get(
-                    gesture_name,
-                    gesture_name
-                )
+            # DISPLAY NAME
+            display_name = GESTURE_LABELS.get(
+                gesture_name,
+                gesture_name
+            )
 
-                wrist = hand_landmarks[0]
+            wrist = hand_landmarks[0]
 
-                x = int(wrist.x * w)
-                y = int(wrist.y * h)
+            x = int(wrist.x * w)
+            y = int(wrist.y * h)
 
-                cv2.putText(
-                    frame,
-                    f"{display_name} ({confidence:.2f})",
-                    (x-20,y-20),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7,
-                    (0,0,255),
-                    2
-                )
+            cv2.putText(
+                frame,
+                f"{display_name} ({confidence:.2f})",
+                (x-20,y-20),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (0,0,255),
+                2
+            )
 
     # -------------------------------
     # SHOW CURRENT MODE
@@ -307,7 +391,6 @@ while cap.isOpened():
 
     if cv2.waitKey(1) & 0xFF == ord("q"):
         break
-
 
 cap.release()
 cv2.destroyAllWindows()
